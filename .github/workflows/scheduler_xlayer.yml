@@ -129,7 +129,7 @@ jobs:
       - name: Generate summary
         if: always()
         run: |
-          echo "## 🚀 Devnet CI - Make Run" >> $GITHUB_STEP_SUMMARY
+          echo "## 🚀 Devnet CI - Make Run" >> $GITHUB_STEP_SUMMARY!
           echo "" >> $GITHUB_STEP_SUMMARY
           if [ $? -eq 0 ]; then
             echo "✅ **Devnet started successfully**" >> $GITHUB_STEP_SUMMARY
