@@ -1,0 +1,165 @@
+name: Devnet CI - Make Run
+
+on:
+  workflow_dispatch:
+
+# Ensure only one workflow runs at a time
+concurrency:
+  group: devnet-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOPRIVATE: "github.com/ethereum-optimism"
+
+jobs:
+  devnet-make-run:
+    name: Run Devnet (make run)
+    runs-on: xlayer-runner
+    env:
+      HOME: /data1/brendon/xlayer-toolkit-runner/actions-runner/home
+    timeout-minutes: 120
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Install Just
+        uses: extractions/setup-just@v2
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Cache Forge dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.foundry/cache
+            packages/contracts-bedrock/cache
+            packages/contracts-bedrock/forge-artifacts
+          key: ${{ runner.os }}-foundry-${{ hashFiles('packages/contracts-bedrock/foundry.toml', 'packages/contracts-bedrock/**/*.sol', 'packages/contracts-bedrock/lib/**') }}
+          restore-keys: |
+            ${{ runner.os }}-foundry-
+
+      - name: Create .env file
+        working-directory: devnet
+        run: |
+          # Copy example.env as base
+          cp example.env .env
+
+          # Override with CI-specific values
+          cat >> .env << EOF
+
+          # CI-specific overrides - Hardcoded local repository paths
+          OP_STACK_LOCAL_DIRECTORY=/data1/brendon/xlayer-repos/optimism
+          OP_GETH_LOCAL_DIRECTORY=/data1/brendon/xlayer-repos/op-geth
+          OP_RETH_LOCAL_DIRECTORY=/data1/brendon/xlayer-repos/reth
+
+          # Build configuration for CI - Rebuild geth, contracts, and op-stack every time
+          SKIP_OP_STACK_BUILD=${{ vars.SKIP_OP_STACK_BUILD || 'false' }}
+          SKIP_OP_CONTRACTS_BUILD=${{ vars.SKIP_OP_CONTRACTS_BUILD || 'false' }}
+          SKIP_OP_GETH_BUILD=${{ vars.SKIP_OP_GETH_BUILD || 'false' }}
+          SKIP_OP_RETH_BUILD=${{ vars.SKIP_OP_RETH_BUILD || 'true' }}
+
+          # Execution client type
+          SEQ_TYPE=${{ vars.SEQ_TYPE || 'geth' }}
+          RPC_TYPE=${{ vars.RPC_TYPE || 'geth' }}
+
+          # Optional: Branch overrides
+          OP_GETH_BRANCH=${{ vars.OP_GETH_BRANCH || '' }}
+          OP_RETH_BRANCH=${{ vars.OP_RETH_BRANCH || '' }}
+          EOF
+
+          echo "✅ Created .env file with CI-specific values"
+          echo "================================"
+          echo "Configuration Summary:"
+          echo "  SEQ_TYPE: ${{ vars.SEQ_TYPE || 'geth' }}"
+          echo "  RPC_TYPE: ${{ vars.RPC_TYPE || 'geth' }}"
+          echo "  SKIP_OP_STACK_BUILD: ${{ vars.SKIP_OP_STACK_BUILD || 'false' }}"
+          echo "  SKIP_OP_CONTRACTS_BUILD: ${{ vars.SKIP_OP_CONTRACTS_BUILD || 'false' }}"
+          echo "  SKIP_OP_GETH_BUILD: ${{ vars.SKIP_OP_GETH_BUILD || 'false' }}"
+          echo "  SKIP_OP_RETH_BUILD: ${{ vars.SKIP_OP_RETH_BUILD || 'true' }}"
+          echo "  OP_GETH_BRANCH: ${{ vars.OP_GETH_BRANCH || '(default)' }}"
+          echo "  OP_RETH_BRANCH: ${{ vars.OP_RETH_BRANCH || '(default)' }}"
+          echo "================================"
+          echo ""
+          echo "Local Repository Paths:"
+          echo "  OP_STACK: /data1/brendon/xlayer-repos/optimism"
+          echo "  OP_GETH: /data1/brendon/xlayer-repos/op-geth"
+          echo "  OP_RETH: /data1/brendon/xlayer-repos/reth"
+          echo "================================"
+          echo ""
+          echo "Full .env (first 30 lines):"
+          cat .env | grep -E '^[A-Z_]+=.*' | head -30
+          echo "================================"
+
+      - name: Run make run
+        working-directory: devnet
+        run: make run
+
+      - name: Upload devnet logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: devnet-logs
+          path: |
+            devnet/tmp/
+            devnet/*.log
+          retention-days: 7
+
+      - name: Generate summary
+        if: always()
+        run: |
+          echo "## 🚀 Devnet CI - Make Run" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ $? -eq 0 ]; then
+            echo "✅ **Devnet started successfully**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Devnet failed to start**" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Sequencer Type | \`${{ vars.SEQ_TYPE || 'geth' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| RPC Type | \`${{ vars.RPC_TYPE || 'geth' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Op-Stack | \`YES\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Op-Contracts | \`YES\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Op-Geth | \`YES\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Op-Reth | \`NO\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Op-Geth Branch | \`${{ vars.OP_GETH_BRANCH || '(default)' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Op-Reth Branch | \`${{ vars.OP_RETH_BRANCH || '(default)' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Repository Paths" >> $GITHUB_STEP_SUMMARY
+          echo "| Repository | Path |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Op-Stack | \`/data1/brendon/xlayer-repos/optimism\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Op-Geth | \`/data1/brendon/xlayer-repos/op-geth\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Op-Reth | \`/data1/brendon/xlayer-repos/reth\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Workflow Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "_View logs in the devnet-logs artifact for detailed information._" >> $GITHUB_STEP_SUMMARY
